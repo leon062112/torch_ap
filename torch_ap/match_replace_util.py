@@ -8,7 +8,7 @@ def fx_graph_replace_first_pattern(
     get_pattern: Callable[[], fx.GraphModule],
     extra_check: Callable[[Dict[fx.Node, fx.Node]], bool],
     replacement_gen: Callable[[Any], fx.GraphModule],
-) -> fx.GraphModule:
+) -> (fx.GraphModule, bool):
     """Find and replace pattern with I/O consistency enforcement."""
     pattern = get_pattern()
     p_nodes = [n for n in pattern.graph.nodes if n.op not in ["placeholder", "output"]]
@@ -23,7 +23,7 @@ def fx_graph_replace_first_pattern(
             break
 
     if not match_result:
-        return target
+        return target, False
 
     # 2. Replacement Generation & Consistency Assertions
     class MatchContext:
@@ -65,7 +65,7 @@ def fx_graph_replace_first_pattern(
 
     target.graph.lint()
     target.recompile()
-    return target
+    return target, True
 
 
 def get_io_count(gm: fx.GraphModule):
@@ -181,7 +181,7 @@ if __name__ == "__main__":
     assert any(n.op == "call_module" for n in t_gm.graph.nodes)
     assert any(n.op == "call_module" for n in pattern_gm.graph.nodes)
 
-    result_gm = fx_graph_replace_first_pattern(
+    result_gm, _ = fx_graph_replace_first_pattern(
         t_gm, get_pattern, lambda m: True, replacement_gen
     )
 
