@@ -2,83 +2,60 @@ import torch
 import torch.fx as fx
 from typing import List, Tuple
 from torch_ap.spider import down_spider
+from torch.fx.passes.infra.pass_manager import PassResult
 
-def insert_down_spider(gm: fx.GraphModule, input_idx: int) -> fx.GraphModule:
-    """ 
-    $insert_down_spider := fx.GraphModule <- $gm <- $input_anchor_position 
-    """
-    placeholders = [n for n in gm.graph.nodes if n.op == 'placeholder']
-    
-    # Assert[IsValidIndex[$input_anchor_position]]
-    # Early return if index is invalid to keep indent depth small
-    if input_idx < 0 or input_idx >= len(placeholders):
-        print(f"[Skip] Invalid index {input_idx} for placeholders of length {len(placeholders)}")
-        return gm
+class DownSpiderInserter:
+    def __init__(self, input_idx: int):
+        self.input_idx = input_idx
 
-    # Print graph before transformation
-    print(f"\n[Before Transformation] Target Input Index: {input_idx}")
-    gm.graph.print_tabular()
+    def __call__(self, gm: fx.GraphModule) -> PassResult:
+        placeholders = [n for n in gm.graph.nodes if n.op == 'placeholder']
         
-    target_node = placeholders[input_idx]
-    
-    # Inline logic: Inject spider after the target placeholder
-    with gm.graph.inserting_after(target_node):
-        new_node = gm.graph.call_function(down_spider, (target_node,))
-        # Re-route all downstream users to the new spider node
-        target_node.replace_all_uses_with(new_node, delete_user_cb=lambda user: user != new_node)
-    
-    # Print graph after transformation
-    print(f"[After $insert_down_spider]")
-    gm.graph.print_tabular()
-    
-    return gm
+        if self.input_idx < 0 or self.input_idx >= len(placeholders):
+            return PassResult(gm, False)
+
+        print(f"\n[Before] Target Input Index: {self.input_idx}")
+        gm.graph.print_tabular()
+            
+        target = placeholders[self.input_idx]
+        with gm.graph.inserting_after(target):
+            new_node = gm.graph.call_function(down_spider, (target,))
+            target.replace_all_uses_with(new_node, delete_user_cb=lambda u: u != new_node)
+        
+        print(f"[After]")
+        gm.graph.print_tabular()
+        
+        return PassResult(gm, True)
 
 def main(gms_with_pos: List[Tuple[fx.GraphModule, int]]) -> None:
-    """ 
-    main := void <- $gms list[fx.GraphModule * $input_anchor_position int]
-    """
-    
-    # --- AssertOnlyForTest logic (Integrated in main) ---
-    
-    # Helper to calculate a unique hash for topological structure
+    # --- AssertOnlyForTest ---
     def get_topo_hash(g): 
         return "->".join([str(n.target) for n in g.graph.nodes if n.op in ['call_function', 'call_method']])
     
-    # AssertOnlyForTest[TopoDiversity[$gms[0]] >= 3]
-    unique_topos = {get_topo_hash(gm) for gm, _ in gms_with_pos}
-    assert len(unique_topos) >= 3, f"TopoDiversity requirement failed: {len(unique_topos)}"
+    assert len({get_topo_hash(gm) for gm, _ in gms_with_pos}) >= 3
+    assert len({len([n for n in gm.graph.nodes if n.op == 'placeholder']) for gm, _ in gms_with_pos}) >= 3
+    assert len({idx for _, idx in gms_with_pos}) >= 3
 
-    # AssertOnlyForTest[DiversityOfNumInputs[$gms[0]] >= 3]
-    input_counts = {len([n for n in gm.graph.nodes if n.op == 'placeholder']) for gm, _ in gms_with_pos}
-    assert len(input_counts) >= 3, f"DiversityOfNumInputs requirement failed: {len(input_counts)}"
-
-    # AssertOnlyForTest[LengthOfSet[$gms[1]] >= 3]
-    unique_indices = {idx for _, idx in gms_with_pos}
-    assert len(unique_indices) >= 3, f"Index Diversity requirement failed: {len(unique_indices)}"
-
-    # --- Inline Logic Execution ---
+    # --- Inline Logic ---
     for gm, input_idx in gms_with_pos:
-        insert_down_spider(gm, input_idx)
+        inserter = DownSpiderInserter(input_idx)
+        inserter(gm)
 
 def run_pipeline():
     def mk_gm(in_count: int, layers: int):
-        # Generate varied modules to satisfy diversity assertions
         args = ", ".join([f"x{i}" for i in range(in_count)])
-        compute = "\n    ".join([f"x0 = x0 + {i}" for i in range(layers)])
-        code = f"class M(torch.nn.Module):\n  def forward(self, {args}):\n    {compute}\n    return x0"
+        ops = "\n    ".join([f"x0 = x0 + {i}" for i in range(layers)])
+        code = f"class M(torch.nn.Module):\n  def forward(self, {args}):\n    {ops}\n    return x0"
         loc = {}
         exec(code, globals(), loc)
         return fx.symbolic_trace(loc['M']())
 
-    # Dataset designed to pass the internal assertions
     data = [
-        (mk_gm(in_count=1, layers=1), 0),
-        (mk_gm(in_count=2, layers=2), 1),
-        (mk_gm(in_count=3, layers=3), 2)
+        (mk_gm(1, 1), 0),
+        (mk_gm(2, 2), 1),
+        (mk_gm(3, 3), 2)
     ]
-
     main(data)
-    print("\n✅ Main logic executed with internal assertions passed.")
 
 if __name__ == "__main__":
     run_pipeline()
