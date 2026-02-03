@@ -2,6 +2,12 @@ import torch
 import torch.fx as fx
 from typing import Callable, Any, Dict, List, Optional
 
+class MatchContext:
+    def __init__(self, nodes_map, target, pattern):
+        self.nodes_map = nodes_map
+        self.target = target
+        self.pattern = pattern
+
 
 def fx_graph_replace_first_pattern(
     target: fx.GraphModule,
@@ -18,7 +24,12 @@ def fx_graph_replace_first_pattern(
     match_result = None
     for t_node in t_nodes:
         res = try_match_at(t_node, p_nodes, pattern)
-        if res and extra_check(res):
+        match_ctx = MatchContext(
+            nodes_map=res,
+            target=target,
+            pattern=pattern
+        )
+        if res and extra_check(match_ctx):
             match_result = res
             break
 
@@ -26,11 +37,8 @@ def fx_graph_replace_first_pattern(
         return target, False
 
     # 2. Replacement Generation & Consistency Assertions
-    class MatchContext:
-        def __init__(self, m):
-            self.nodes_map = m
-
-    replacement = replacement_gen(MatchContext(match_result))
+    match_ctx = MatchContext(match_result, target=target, pattern=pattern)
+    replacement = replacement_gen(match_ctx)
 
     p_in, p_out = get_io_count(pattern)
     r_in, r_out = get_io_count(replacement)
