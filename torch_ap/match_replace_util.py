@@ -1,12 +1,14 @@
 import torch
 import torch.fx as fx
+from dataclasses import dataclass
 from typing import Callable, Any, Dict, List, Optional
 
+
+@dataclass
 class MatchContext:
-    def __init__(self, nodes_map, target, pattern):
-        self.nodes_map = nodes_map
-        self.target = target
-        self.pattern = pattern
+    nodes_map: dict[fx.Node, fx.Node]
+    target: fx.GraphModule
+    pattern: fx.GraphModule
 
 
 def fx_graph_replace_first_pattern(
@@ -24,11 +26,7 @@ def fx_graph_replace_first_pattern(
     match_result = None
     for t_node in t_nodes:
         res = try_match_at(t_node, p_nodes, pattern)
-        match_ctx = MatchContext(
-            nodes_map=res,
-            target=target,
-            pattern=pattern
-        )
+        match_ctx = MatchContext(nodes_map=res, target=target, pattern=pattern)
         if res and extra_check(match_ctx):
             match_result = res
             break
