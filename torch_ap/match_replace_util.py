@@ -11,12 +11,11 @@ class MatchContext:
     pattern: fx.GraphModule
 
 
-def fx_graph_replace_first_pattern(
+def fx_graph_match_first_pattern(
     target: fx.GraphModule,
     get_pattern: Callable[[], fx.GraphModule],
     extra_check: Callable[[Dict[fx.Node, fx.Node]], bool],
-    replacement_gen: Callable[[Any], fx.GraphModule],
-) -> (fx.GraphModule, bool):
+) -> MatchContext | None:
     """Find and replace pattern with I/O consistency enforcement."""
     pattern = get_pattern()
     p_nodes = [n for n in pattern.graph.nodes if n.op not in ["placeholder", "output"]]
@@ -32,10 +31,31 @@ def fx_graph_replace_first_pattern(
             break
 
     if not match_result:
-        return target, False
+        return None
 
-    # 2. Replacement Generation & Consistency Assertions
     match_ctx = MatchContext(match_result, target=target, pattern=pattern)
+    return match_ctx
+
+
+def fx_graph_replace_first_pattern(
+    target: fx.GraphModule,
+    get_pattern: Callable[[], fx.GraphModule],
+    extra_check: Callable[[Dict[fx.Node, fx.Node]], bool],
+    replacement_gen: Callable[[Any], fx.GraphModule],
+) -> (fx.GraphModule, bool):
+    """Find and replace pattern with I/O consistency enforcement."""
+    pattern = get_pattern()
+    p_nodes = [n for n in pattern.graph.nodes if n.op not in ["placeholder", "output"]]
+    t_nodes = [n for n in target.graph.nodes if n.op not in ["placeholder", "output"]]
+
+    # 1. Matching
+    match_ctx = fx_graph_match_first_pattern(
+        target=target,
+        get_pattern=lambda: pattern,
+        extra_check=extra_check,
+    )
+    if match_ctx is None:
+        return target, False
     replacement = replacement_gen(match_ctx)
 
     p_in, p_out = get_io_count(pattern)
@@ -46,6 +66,7 @@ def fx_graph_replace_first_pattern(
     assert p_out == r_out, f"Output mismatch: pattern({p_out}) vs replacement({r_out})"
 
     # 3. Surgery
+    match_result = match_ctx.nodes_map
     p_output_node = next(n for n in pattern.graph.nodes if n.op == "output")
     t_exit_node = match_result[p_output_node.args[0]]
     r_placeholders = [n for n in replacement.graph.nodes if n.op == "placeholder"]

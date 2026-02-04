@@ -1,6 +1,11 @@
 import torch
 import torch.fx as fx
 from torch.fx.passes.infra.pass_manager import PassResult
+from torch_ap.match_replace_util import (
+    MatchContext,
+    fx_graph_match_first_pattern,
+    fx_graph_replace_first_pattern,
+)
 
 
 class ApPass:
@@ -18,8 +23,6 @@ class ApPass:
 
     def __call__(self, target: fx.GraphModule) -> PassResult:
         """$__call__ (PassResult <- $target fx.GraphModule)"""
-        # Local import to manage dependencies within the call scope
-        from torch_ap.match_replace_util import fx_graph_replace_first_pattern
 
         # Execute the transformation logic using the utility function
         gm, modified = fx_graph_replace_first_pattern(
@@ -27,6 +30,9 @@ class ApPass:
         )
 
         return PassResult(gm, modified=modified)
+
+    def get_match_context(self, target: fx.GraphModule) -> MatchContext | None:
+        return fx_graph_match_first_pattern(target, self.pattern, self.constraint)
 
     def get_submodule(self, match_ctx, submodule_name: str) -> fx.GraphModule:
         pattern_call_module_node = self.get_call_module_node(
