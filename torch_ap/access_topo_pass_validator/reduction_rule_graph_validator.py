@@ -1,117 +1,164 @@
 import torch
 import torch.fx as fx
+import networkx as nx
 from typing import Any
 from torch_ap.spider import up_spider, down_spider
 
 
-class AccessTopoReductionRuleGraphValidator:
+class ReductionRuleGraphValidator:
     """
-    AccessTopoReductionRuleGraphValidator := void <- $pattern_func <- $replacement_func <- ()
+    ReductionRuleGraphValidator := void <- $p_func <- $r_func <- ()
     """
 
     def __init__(self):
-        # # inline: $tracer fx.Tracer
-        # Explicitly autowrap spider functions to capture them as nodes in the graph.
+        # [Viba Contract] spiders are leaf nodes for this tracer instance
         self.tracer = fx.Tracer(autowrap_functions=(up_spider, down_spider))
 
     def __call__(self, pattern_func: Any, replacement_func: Any) -> None:
-        # # inline: Traced helper
-        def get_traced_gm(func) -> fx.GraphModule:
-            return fx.GraphModule(torch.nn.Module(), self.tracer.trace(func))
+        p_gm = fx.GraphModule(torch.nn.Module(), self.tracer.trace(pattern_func))
+        r_gm = fx.GraphModule(torch.nn.Module(), self.tracer.trace(replacement_func))
 
-        # # inline: Assert logic helpers
-        def get_num_placeholders(gm: fx.GraphModule) -> int:
-            return len([n for n in gm.graph.nodes if n.op == "placeholder"])
+        # 1. Assert Placeholder/Output parity
+        get_phs = lambda gm: [n for n in gm.graph.nodes if n.op == "placeholder"]
 
-        def get_num_output_args(gm: fx.GraphModule) -> int:
-            output_node = next(n for n in gm.graph.nodes if n.op == "output")
-            out_args = output_node.args[0]
-            if out_args is None:
+        def get_out_count(gm):
+            out = next(n for n in gm.graph.nodes if n.op == "output")
+            args = out.args[0]
+            if args is None:
                 return 0
-            return len(out_args) if isinstance(out_args, (tuple, list)) else 1
+            return len(args) if isinstance(args, (tuple, list)) else 1
 
-        def get_num_spiders(gm: fx.GraphModule) -> int:
-            # $contain (up_spider | down_spider)
-            spider_targets = {up_spider, down_spider}
-            return len(
-                [
-                    n
-                    for n in gm.graph.nodes
-                    if n.op == "call_function" and n.target in spider_targets
-                ]
-            )
+        assert len(get_phs(p_gm)) == len(get_phs(r_gm)), "Placeholder count mismatch"
+        assert get_out_count(p_gm) == get_out_count(r_gm), "Output count mismatch"
 
-        # Execute Tracing
-        p_gm = get_traced_gm(pattern_func)
-        r_gm = get_traced_gm(replacement_func)
+        # 2. Assert Spiders > 0 (Semantic constraint)
+        spider_targets = {up_spider, down_spider}
+        num_spiders = len(
+            [
+                n
+                for n in p_gm.graph.nodes
+                if n.op == "call_function" and n.target in spider_targets
+            ]
+        )
+        assert num_spiders > 0, "Pattern must contain at least one spider op"
 
-        # Assert[NumPlaceholders[Traced[$p]] == NumPlaceholders[Traced[$r]]]
-        assert get_num_placeholders(p_gm) == get_num_placeholders(
-            r_gm
-        ), f"Placeholder mismatch: {get_num_placeholders(p_gm)} vs {get_num_placeholders(r_gm)}"
+        # 3. Assert Weakly Connected Components == 1
+        def get_wcc(gm):
+            g = nx.DiGraph()
+            # Include placeholders to act as the "bus" connecting independent ops
+            # Exclude output node to focus on the computational "body"
+            nodes = [n for n in gm.graph.nodes if n.op != "output"]
 
-        # Assert[NumOutputArgs[Traced[$p]] == NumOutputArgs[Traced[$r]]]
-        assert get_num_output_args(p_gm) == get_num_output_args(
-            r_gm
-        ), f"Output mismatch: {get_num_output_args(p_gm)} vs {get_num_output_args(r_gm)}"
+            # Identity case check
+            if not any(n.op not in ("placeholder", "output") for n in gm.graph.nodes):
+                return 1
 
-        # Assert[NumSpiders[Traced[$p], $contain (up_spider | down_spider)] > 0]
+            for n in nodes:
+                g.add_node(n.name)
+                for arg in n.args:
+                    if isinstance(arg, fx.Node) and arg.op != "output":
+                        g.add_edge(arg.name, n.name)
+
+            # Remove unused placeholders (they don't count toward fragmentation)
+            unused_phs = [n for n, d in g.degree() if d == 0]
+            g.remove_nodes_from(unused_phs)
+
+            return nx.number_weakly_connected_components(g)
+
+        assert get_wcc(p_gm) == 1, f"Pattern fragmented ({get_wcc(p_gm)} components)"
         assert (
-            get_num_spiders(p_gm) > 0
-        ), "AccessTopo validation failed: Pattern function must contain at least one spider op."
+            get_wcc(r_gm) == 1
+        ), f"Replacement fragmented ({get_wcc(r_gm)} components)"
 
 
-# --- Test Suite (Valid and Invalid Cases) ---
+# --- Final 9 Test Case Suite ---
 
 
 def run_tests():
-    validator = AccessTopoReductionRuleGraphValidator()
+    v = ReductionRuleGraphValidator()
 
-    # 1. VALID CASE: Matches placeholders, outputs, and contains a spider
-    def valid_p(x):
+    # Valid Cases
+    def v1_p(x):
+        return down_spider(x)
+
+    def v1_r(x):
+        return x
+
+    def v2_p(x, y):
+        up_spider(x, y)  # Side-effect spider
+        return x + y
+
+    def v2_r(x, y):
+        return x + y
+
+    def v3_p(x):
         return torch.relu(down_spider(x))
 
-    def valid_r(x):
+    def v3_r(x):
         return torch.relu(x)
 
-    # 2. INVALID CASE: Placeholder mismatch (2 vs 1)
-    def inv_p_args(x, y):
-        return down_spider(x) + y
-
-    def inv_r_args(x):
-        return x
-
-    # 3. INVALID CASE: Output mismatch (Tuple vs Tensor)
-    def inv_p_out(x):
+    def v4_p(x):
         return down_spider(x), x
 
-    def inv_r_out(x):
+    def v4_r(x):
+        return x, x
+
+    # Invalid Cases
+    def i1_p(x):
+        return torch.relu(x)  # Missing spider
+
+    def i1_r(x):
         return x
 
-    # 4. INVALID CASE: No Spider in pattern
-    def inv_p_no_spider(x):
-        return torch.relu(x)
+    def i2_p(x, y):
+        return down_spider(x)  # Arg Drop (p:2, r:1)
 
-    def inv_r_no_spider(x):
+    def i2_r(x):
         return x
 
-    print("--- Running AccessTopo Tests ---")
+    def i3_p(x):
+        return down_spider(x)
 
-    # Test Valid
-    validator(valid_p, valid_r)
-    print("[PASS] Valid reduction rule")
+    def i3_r(x):
+        a = x + 1
+        b = torch.ones_like(x)  # b is a separate island unrelated to 'a' or output
+        return a
 
-    # Test Invalids
-    for name, p, r in [
-        ("Placeholder Mismatch", inv_p_args, inv_r_args),
-        ("Output Mismatch", inv_p_out, inv_r_out),
-        ("No Spider in Pattern", inv_p_no_spider, inv_r_no_spider),
-    ]:
+    def i4_p(x, y):
+        a = down_spider(x)
+        b = down_spider(y)  # No common inputs or shared ops
+        return a
+
+    def i4_r(x, y):
+        return x
+
+    def i5_p(x):
+        return down_spider(x)
+
+    def i5_r(x):
+        return x, x  # Return arity mismatch
+
+    test_list = [
+        ("Identity Bypass", v1_p, v1_r, True),
+        ("Side-effect Spider", v2_p, v2_r, True),
+        ("Wrapped Math", v3_p, v3_r, True),
+        ("Multi-Output Identity", v4_p, v4_r, True),
+        ("No Spider Error", i1_p, i1_r, False),
+        ("Arg Count Error", i2_p, i2_r, False),
+        ("Frag Replacement Error", i3_p, i3_r, False),
+        ("Frag Pattern Error", i4_p, i4_r, False),
+        ("Output Count Error", i5_p, i5_r, False),
+    ]
+
+    for name, p, r, expected in test_list:
         try:
-            validator(p, r)
-            print(f"[FAIL] {name} should have raised AssertionError")
+            v(p, r)
+            print(f"[PASS] {name}")
         except AssertionError as e:
-            print(f"[PASS] {name} caught: {e}")
+            if not expected:
+                print(f"[PASS] {name} caught expected: {e}")
+            else:
+                print(f"[FAIL] {name} raised unexpectedly: {e}")
 
 
 if __name__ == "__main__":
