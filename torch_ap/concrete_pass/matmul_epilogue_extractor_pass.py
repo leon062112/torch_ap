@@ -5,6 +5,16 @@ from torch_ap.ap_pass import ApPass, PassResult
 from torch_ap.match_replace_util import MatchContext
 
 
+class SimpleTracer(fx.Tracer):
+
+    def __init__(self, leaf_module_classes):
+        super().__init__()
+        self.leaf_module_classes = leaf_module_classes
+
+    def is_leaf_module(self, m, n):
+        return isinstance(m, self.leaf_module_classes)
+
+
 class PatternModule(torch.nn.Module):
     def forward(self, x):
         return x
@@ -21,6 +31,7 @@ class P(torch.nn.Module):
 
 class MatmulEpilogueExtractorPass(ApPass):
     def pattern(self) -> fx.GraphModule:
+        tracer = SimpleTracer(leaf_module_classes=(PatternModule))
         return fx.GraphModule(P(), tracer.trace(P()))
 
     def constraint(self, match_ctx) -> bool:
@@ -36,35 +47,15 @@ class MatmulEpilogueExtractorPass(ApPass):
 
 if __name__ == "__main__":
 
-    class MatmulEpilogue(torch.nn.Module):
-        def __init__(self, bias):
-            super().__init__()
-            self.bias = bias
-
-        def forward(self, x):
-            return x - self.bias
-
-    class SimpleTracer(fx.Tracer):
-
-        def __init__(self, leaf_module_classes):
-            super().__init__()
-            self.leaf_module_classes = leaf_module_classes
-
-        def is_leaf_module(self, m, n):
-            return isinstance(m, self.leaf_module_classes)
-
-    tracer = SimpleTracer(leaf_module_classes=(PatternModule))
-
     # Target: Matmul -> MatmulEpilogue (call_module)
     class TargetModel(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.epi = MatmulEpilogue(2.0)
 
         def forward(self, a, b):
-            return self.epi(torch.matmul(a, b))
+            return torch.tanh(torch.matmul(a, b) - 2.0)
 
-    t_gm = fx.GraphModule(TargetModel(), tracer.trace(TargetModel()))
+    t_gm = fx.GraphModule(TargetModel(), fx.Tracer().trace(TargetModel()))
     from torch.fx.passes.infra.pass_manager import PassManager
     from torch_ap.trivial_ops_folder_pass import TrivialOpsFolderPass
 

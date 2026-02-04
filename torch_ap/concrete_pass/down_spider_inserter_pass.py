@@ -1,24 +1,30 @@
 import torch
 import torch.fx as fx
-from typing import List, Tuple
+from typing import List, Tuple, Callable
 from torch_ap.spider import down_spider
 from torch.fx.passes.infra.pass_manager import PassResult
 
 
-class DownSpiderInserter:
-    def __init__(self, input_idx: int):
-        self.input_idx = input_idx
+class DownSpiderInserterPass:
+    def __init__(self, input_idx: int | Callable[[], int]):
+        if isinstance(input_idx, int):
+            self.get_input_idx = lambda: input_idx
+        else:
+            assert callable(input_idx), f"{input_idx}"
+            self.get_input_idx = input_idx
 
     def __call__(self, gm: fx.GraphModule) -> PassResult:
         placeholders = [n for n in gm.graph.nodes if n.op == "placeholder"]
 
-        if self.input_idx < 0 or self.input_idx >= len(placeholders):
+        input_idx = self.get_input_idx()
+
+        if input_idx < 0 or input_idx >= len(placeholders):
             return PassResult(gm, False)
 
-        print(f"\n[Before] Target Input Index: {self.input_idx}")
+        print(f"\n[Before] Target Input Index: {input_idx}")
         gm.graph.print_tabular()
 
-        target = placeholders[self.input_idx]
+        target = placeholders[input_idx]
         with gm.graph.inserting_after(target):
             new_node = gm.graph.call_function(down_spider, (target,))
             target.replace_all_uses_with(
