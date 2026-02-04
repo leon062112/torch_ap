@@ -109,16 +109,25 @@ if __name__ == "__main__":
         )
 
     t_gm = fx.GraphModule(TargetModel(), tracer.trace(TargetModel()))
-    t_gm = fold_submodule(t_gm)
-    print("[after fold_submodule]====")
-    print(t_gm.code)
-    print("[after fold_submodule]====")
+    from torch.fx.passes.infra.pass_manager import PassManager
+    from torch_ap.trivial_ops_folder_pass import TrivialOpsFolderPass
+
+    # t_gm = fold_submodule(t_gm)
+    # print("--- fold_submodule ---")
+    # print(t_gm.graph)
+    # print("--- fold_submodule ---")
+    pass_mgr = PassManager(
+        [
+            TrivialOpsFolderPass(),
+            MatmulEpilogueApPass(),
+        ]
+    )
 
     # --- Verification ---
     print("--- Before Transformation ---")
     print(t_gm.code)
 
-    result_gm = MatmulEpilogueApPass()(t_gm).graph_module
+    result_gm = pass_mgr(t_gm).graph_module
 
     print("\n--- After Transformation ---")
     print(result_gm.code)

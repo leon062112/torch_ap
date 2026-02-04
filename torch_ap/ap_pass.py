@@ -1,5 +1,6 @@
 import torch
 import torch.fx as fx
+from torch.fx.passes.infra.pass_manager import PassResult
 
 
 class ApPass:
@@ -15,7 +16,7 @@ class ApPass:
         """$replacement (fx.GraphModule <- MatchContext)"""
         raise NotImplementedError
 
-    def __call__(self, target: fx.GraphModule):
+    def __call__(self, target: fx.GraphModule) -> PassResult:
         """$__call__ (PassResult <- $target fx.GraphModule)"""
         # Local import to manage dependencies within the call scope
         from torch_ap.match_replace_util import fx_graph_replace_first_pattern
@@ -24,7 +25,6 @@ class ApPass:
         gm, modified = fx_graph_replace_first_pattern(
             target, self.pattern, self.constraint, self.replacement
         )
-        from torch.fx.passes.infra.pass_manager import PassResult
 
         return PassResult(gm, modified=modified)
 

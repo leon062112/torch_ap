@@ -28,14 +28,17 @@ def get_trivial_ops_ranges(
 
 
 def is_trivial_op(node: fx.Node) -> bool:
-    """bool <- fx.Node # if node.target in torch.add, torch.relu"""
-    trivial_targets = {
+    if node.op != "call_function":
+        return False
+
+    targets = {
         operator.add,
         operator.sub,
         operator.mul,
         operator.truediv,
         operator.floordiv,
+        torch.add,
         torch.relu,
-        torch.nn.functional.relu,
+        torch.mul,
     }
-    return node.op == "call_function" and node.target in trivial_targets
+    return node.target in targets
