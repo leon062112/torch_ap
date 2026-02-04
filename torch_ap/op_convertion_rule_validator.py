@@ -5,9 +5,9 @@ from typing import Any, Union, List
 # --- Core Functor Implementation ---
 
 
-class OpConvertionPatternAndReplacementValidator:
+class OpConvertionRuleValidator:
     """
-    OpConvertionPatternAndReplacementValidator :=
+    OpConvertionRuleValidator :=
         void <- $pattern_func <- $replacement_func <- ()
     """
 
@@ -60,7 +60,7 @@ def main():
     def invalid_pattern(x):
         return operator.pow(x, 2) + 1
 
-    validator = OpConvertionPatternAndReplacementValidator()
+    validator = OpConvertionRuleValidator()
 
     print("Checking valid pair...")
     validator(valid_pattern, valid_replacement)
