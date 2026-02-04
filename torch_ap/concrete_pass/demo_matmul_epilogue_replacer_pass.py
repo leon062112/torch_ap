@@ -13,8 +13,8 @@ class DemoMatmulEpilogueReplacerPass:
     def __init__(self, epilogue_func: Any = None):
         if epilogue_func is None:
 
-            def epilogue_func(x):
-                return torch.tanh(x**2)
+            def epilogue_func(x, bias):
+                return torch.tanh(x + bias)
 
         # 1. Capture $epilogue_func
         self.epilogue_func = epilogue_func
@@ -26,10 +26,10 @@ class DemoMatmulEpilogueReplacerPass:
         # Inline construction of the module to be traced
         def get_torch_module(epi_fn: Any) -> torch.nn.Module:
             class GeneratedModule(torch.nn.Module):
-                def forward(self, x: torch.Tensor, y: torch.Tensor):
+                def forward(self, x: torch.Tensor, y: torch.Tensor, bias: torch.Tensor):
                     # matmul + epilogue (indicated by $epilogue_func)
                     out = torch.matmul(x, y)
-                    return epi_fn(out)
+                    return epi_fn(out, bias)
 
             return GeneratedModule()
 
