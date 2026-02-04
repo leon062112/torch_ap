@@ -28,6 +28,27 @@ class ApPass:
 
         return PassResult(gm, modified=modified)
 
+    def get_submodule(self, match_ctx, submodule_name: str) -> fx.GraphModule:
+        pattern_call_module_node = self.get_call_module_node(
+            match_ctx.pattern, submodule_name
+        )
+        target_call_module_node = match_ctx.nodes_map[pattern_call_module_node]
+        target_module_name = target_call_module_node.target
+        return getattr(match_ctx.target, target_module_name)
+
+    def get_call_module_node(self, pattern_gm: fx.GraphModule, submodule_name: str):
+        def is_selected_call_module_node(node):
+            if node.op != "call_module":
+                return False
+            if node.target != submodule_name:
+                return False
+            return True
+
+        for node in pattern_gm.graph.nodes:
+            if is_selected_call_module_node(node):
+                return node
+        return None
+
 
 if __name__ == "__main__":
 
