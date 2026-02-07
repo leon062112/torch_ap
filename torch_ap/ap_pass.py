@@ -1,6 +1,7 @@
 import torch
 import torch.fx as fx
 from torch.fx.passes.infra.pass_manager import PassResult
+from torch_ap.torch_ap_trace import torch_ap_trace
 from torch_ap.match_replace_util import (
     MatchContext,
     fx_graph_match_first_pattern,
@@ -34,23 +35,47 @@ class ApPass:
     def get_match_context(self, target: fx.GraphModule) -> MatchContext | None:
         return fx_graph_match_first_pattern(target, self.pattern, self.constraint)
 
-    def get_submodule(self, match_ctx, submodule_name: str) -> fx.GraphModule:
-        pattern_call_module_node = self.get_call_module_node(
-            match_ctx.pattern, submodule_name
+    def get_submodule(self, match_ctx, pattern_submodule_name: str) -> fx.GraphModule:
+        target_call_module_node = self.get_target_call_module_node(
+            match_ctx, pattern_submodule_name
         )
-        target_call_module_node = match_ctx.nodes_map[pattern_call_module_node]
         target_module_name = target_call_module_node.target
         return getattr(match_ctx.target, target_module_name)
 
-    def get_call_module_node(self, pattern_gm: fx.GraphModule, submodule_name: str):
-        def is_selected_call_module_node(node):
-            if node.op != "call_module":
+    def get_first_target_call_function_node(self, match_ctx, pattern_target):
+        pattern_call_function_node = self.get_first_pattern_call_function_node(
+            match_ctx, pattern_target
+        )
+        return match_ctx.nodes_map[pattern_call_function_node]
+
+    def get_first_pattern_call_function_node(self, match_ctx, pattern_target):
+        def is_selected_node(node):
+            if node.op != "call_function":
                 return False
-            if node.target != submodule_name:
+            if node.target != pattern_target:
                 return False
             return True
 
-        for node in pattern_gm.graph.nodes:
+        for node in match_ctx.pattern.graph.nodes:
+            if is_selected_node(node):
+                return node
+        return None
+
+    def get_target_call_module_node(self, match_ctx, pattern_submodule_name: str):
+        pattern_call_module_node = self.get_pattern_call_module_node(
+            match_ctx, pattern_submodule_name
+        )
+        return match_ctx.nodes_map[pattern_call_module_node]
+
+    def get_pattern_call_module_node(self, match_ctx, pattern_submodule_name: str):
+        def is_selected_call_module_node(node):
+            if node.op != "call_module":
+                return False
+            if node.target != pattern_submodule_name:
+                return False
+            return True
+
+        for node in match_ctx.pattern.graph.nodes:
             if is_selected_call_module_node(node):
                 return node
         return None
@@ -114,7 +139,7 @@ if __name__ == "__main__":
                     # replacement contains 0 call_module nodes
                     return torch.matmul(x, y) + bias_val
 
-            return fx.symbolic_trace(Replacement())
+            return torch_ap_trace(Replacement())
 
     result_gm = DemoApPass()(t_gm).graph_module
 

@@ -3,6 +3,7 @@ import torch.fx as fx
 
 from torch_ap.ap_pass import ApPass
 from torch_ap.match_replace_util import MatchContext
+from torch_ap.torch_ap_trace import torch_ap_trace
 
 
 class PatternModule(torch.nn.Module):
@@ -36,7 +37,7 @@ class MatmulEpilogueApPass(ApPass):
         return True
 
     def replacement(self, ctx) -> fx.GraphModule:
-        return fx.symbolic_trace(Replacement())
+        return torch_ap_trace(Replacement())
 
 
 if __name__ == "__main__":

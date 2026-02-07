@@ -3,6 +3,7 @@ import torch.fx as fx
 from typing import List, Union
 from torch_ap.load_store_op import store
 from torch.fx.passes.infra.pass_manager import PassResult
+from torch_ap.torch_ap_trace import torch_ap_trace
 
 
 class StoreOpInserterPass:
@@ -78,7 +79,7 @@ def test_main():
             return x + 1.0
 
     print("Testing Case 1: Single Output...")
-    traced_single = fx.symbolic_trace(SingleOutputModel())
+    traced_single = torch_ap_trace(SingleOutputModel())
     res_single = StoreOpInserterPass()(traced_single)
     res_single.graph_module.graph.print_tabular()
 
@@ -97,7 +98,7 @@ def test_main():
             return a, b
 
     print("Testing Case 2: Multi-Output...")
-    traced_multi = fx.symbolic_trace(MultiOutputModel())
+    traced_multi = torch_ap_trace(MultiOutputModel())
     res_multi = StoreOpInserterPass()(traced_multi)
     res_multi.graph_module.graph.print_tabular()
 

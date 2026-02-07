@@ -1,7 +1,41 @@
 import torch
 import torch.fx as fx
+import inspect
+import string
 from typing import Any
 from torch.fx.passes.infra.pass_manager import PassResult
+from torch_ap.torch_ap_trace import torch_ap_trace
+from typing import Callable, List
+
+
+def reset_func_arg_names(arg_names):
+    # arg_names is a list like ['x', 'y', 'z']
+    args_str = ", ".join(arg_names)
+    import random
+
+    func_name = "dynamic_func_" + "".join(random.choices(string.ascii_lowercase, k=5))
+
+    source = f"""
+def {func_name}(f):
+    def func({args_str}):
+        return f({args_str})
+    return func
+"""
+    namespace = {}
+    exec(source, globals(), namespace)
+    return namespace[func_name]
+
+
+def get_arg_names(func: Callable) -> List[str]:
+    """
+    Viba: get_arg_names := list[str] <- Callable
+    Reflects a callable to extract its parameter names.
+    """
+    # Introspect the function signature
+    signature = inspect.signature(func)
+
+    # Extract names from the mapping of parameters
+    return list(signature.parameters.keys())
 
 
 class DemoMatmulEpilogueReplacerPass:
@@ -16,32 +50,20 @@ class DemoMatmulEpilogueReplacerPass:
             def epilogue_func(x, bias):
                 return torch.tanh(x + bias)
 
-        # 1. Capture $epilogue_func
-        self.epilogue_func = epilogue_func
+        arg_names = get_arg_names(epilogue_func)
 
-        # 2. $tracer fx.Tracer
-        self.tracer = fx.Tracer()
+        @reset_func_arg_names(["_mm_in0", "_mm_in1", *arg_names[1:]])
+        def matmul_plus_epilogue(x: torch.Tensor, y: torch.Tensor, *args):
+            out = torch.matmul(x, y)
+            return epilogue_func(out, *args)
 
-        # 3. $get_torch_module (torch.nn.Module <- $epilogue_func)
-        # Inline construction of the module to be traced
-        def get_torch_module(epi_fn: Any) -> torch.nn.Module:
-            class GeneratedModule(torch.nn.Module):
-                def forward(self, x: torch.Tensor, y: torch.Tensor, bias: torch.Tensor):
-                    # matmul + epilogue (indicated by $epilogue_func)
-                    out = torch.matmul(x, y)
-                    return epi_fn(out, bias)
-
-            return GeneratedModule()
-
-        self.mod = get_torch_module(self.epilogue_func)
+        self.matmul_plus_epilogue = matmul_plus_epilogue
 
     def __call__(self, _unused: None) -> PassResult:
         """
         Executes the trace on the synthesized module.
         """
-        # Symbolic tracing via $tracer
-        graph = self.tracer.trace(self.mod)
-        generated_gm = fx.GraphModule(self.mod, graph)
+        generated_gm = torch_ap_trace(self.matmul_plus_epilogue)
 
         # Always returns modified=True as it generates a new GraphModule
         return PassResult(graph_module=generated_gm, modified=True)

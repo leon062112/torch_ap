@@ -43,5 +43,7 @@ def is_trivial_op(node: fx.Node) -> bool:
         torch.mul,
         torch.exp,
         torch.tanh,
+        torch.pow,
+        torch.sigmoid,
     }
     return node.target in targets

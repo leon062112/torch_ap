@@ -3,6 +3,7 @@ import torch.fx as fx
 from typing import List
 from torch_ap.load_store_op import load
 from torch.fx.passes.infra.pass_manager import PassResult
+from torch_ap.torch_ap_trace import torch_ap_trace
 
 
 class LoadOpInserterPass:
@@ -52,18 +53,18 @@ def test_main():
 
     # Trace the model
     model = SimpleModel()
-    traced = fx.symbolic_trace(model)
+    traced = torch_ap_trace(model)
 
-    print("Graph before LoadOpInserterPass:")
-    traced.graph.print_tabular()
+    # print("Graph before LoadOpInserterPass:")
+    # traced.graph.print_tabular()
 
     # Apply the pass
     inserter = LoadOpInserterPass()
     result = inserter(traced)
 
     print(f"\nModified: {result.modified}")
-    print("Graph after LoadOpInserterPass:")
-    result.graph_module.graph.print_tabular()
+    # print("Graph after LoadOpInserterPass:")
+    # result.graph_module.graph.print_tabular()
 
     # Functional verification
     x, y = torch.randn(3), torch.randn(3)

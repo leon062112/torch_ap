@@ -1,12 +1,4 @@
-import torch
-import torch.fx as fx
+import torch_ap.ops as ops
 
-
-@fx.wrap
-def down_spider(x):
-    return x
-
-
-@fx.wrap
-def up_spider(x, y):
-    return ()
+down_spider = ops.down_spider
+up_spider = ops.up_spider

@@ -1,5 +1,6 @@
 import torch.fx as fx
 from torch.fx.passes.infra.pass_manager import PassResult
+from torch_ap.torch_ap_trace import torch_ap_trace
 
 # --- ImportFrom (Viba defined mappings) ---
 from torch_ap.trivial_ops_util import get_trivial_ops_ranges, is_trivial_op
@@ -55,7 +56,7 @@ def main():
             z = z * 2  # Trivial (operator.mul)
             return z
 
-    gm = fx.symbolic_trace(M())
+    gm = torch_ap_trace(M())
 
     print("--- [Before Transformation] ---")
     gm.graph.print_tabular()

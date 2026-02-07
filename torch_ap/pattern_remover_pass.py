@@ -2,6 +2,7 @@ import torch
 import torch.fx as fx
 from torch.fx import subgraph_rewriter
 from torch.fx.passes.infra.pass_manager import PassResult
+from torch_ap.torch_ap_trace import torch_ap_trace
 
 
 class PatternRemoverPass:
@@ -9,10 +10,7 @@ class PatternRemoverPass:
         self.pattern_func = pattern_func
 
         # Trace pattern_func directly
-        tracer = fx.Tracer()
-        self.pattern_gm = fx.GraphModule(
-            torch.nn.Module(), tracer.trace(self.pattern_func)
-        )
+        self.pattern_gm = torch_ap_trace(self.pattern_func)
 
         # 1. $get_num_placehoders
         def get_num_placeholders(gm: fx.GraphModule) -> int:
@@ -61,7 +59,7 @@ class PatternRemoverPass:
     def __call__(self, gm: fx.GraphModule) -> PassResult:
         # Match pattern and bypass using identity replacement
         matches = subgraph_rewriter.replace_pattern(
-            gm, self.pattern_gm, self.replacement_gm
+            gm, torch_ap_trace(self.pattern_gm), torch_ap_trace(self.replacement_gm)
         )
 
         modified = len(matches) > 0
@@ -86,7 +84,7 @@ def main():
             y = x**2
             return y + 5
 
-    gm = fx.symbolic_trace(M())
+    gm = torch_ap_trace(M())
 
     print("--- [Before] ---")
     gm.graph.print_tabular()

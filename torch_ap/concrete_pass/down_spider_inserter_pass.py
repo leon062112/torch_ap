@@ -3,6 +3,7 @@ import torch.fx as fx
 from typing import List, Tuple, Callable
 from torch_ap.spider import down_spider
 from torch.fx.passes.infra.pass_manager import PassResult
+from torch_ap.torch_ap_trace import torch_ap_trace
 
 
 class DownSpiderInserterPass:
@@ -21,8 +22,8 @@ class DownSpiderInserterPass:
         if input_idx < 0 or input_idx >= len(placeholders):
             return PassResult(gm, False)
 
-        print(f"\n[Before] Target Input Index: {input_idx}")
-        gm.graph.print_tabular()
+        # print(f"\n[Before] Target Input Index: {input_idx}")
+        # gm.graph.print_tabular()
 
         target = placeholders[input_idx]
         with gm.graph.inserting_after(target):
@@ -31,8 +32,8 @@ class DownSpiderInserterPass:
                 new_node, delete_user_cb=lambda u: u != new_node
             )
 
-        print(f"[After]")
-        gm.graph.print_tabular()
+        # print(f"[After]")
+        # gm.graph.print_tabular()
 
         return PassResult(gm, True)
 
@@ -73,7 +74,7 @@ def run_pipeline():
         code = f"class M(torch.nn.Module):\n  def forward(self, {args}):\n    {ops}\n    return x0"
         loc = {}
         exec(code, globals(), loc)
-        return fx.symbolic_trace(loc["M"]())
+        return torch_ap_trace(loc["M"]())
 
     data = [(mk_gm(1, 1), 0), (mk_gm(2, 2), 1), (mk_gm(3, 3), 2)]
     main(data)

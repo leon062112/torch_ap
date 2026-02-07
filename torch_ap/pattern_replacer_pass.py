@@ -2,6 +2,7 @@ import torch
 import torch.fx as fx
 from torch.fx.passes.infra.pass_manager import PassResult
 from typing import Any
+from torch_ap.torch_ap_trace import torch_ap_trace
 
 
 class PatternReplacerPass:
@@ -17,7 +18,9 @@ class PatternReplacerPass:
     def __call__(self, target: fx.GraphModule) -> PassResult:
         # # inline: fx.subgraph_rewriter.replace_pattern
         matches = fx.subgraph_rewriter.replace_pattern(
-            target, self.pattern_func, self.replacement_func
+            target,
+            torch_ap_trace(self.pattern_func),
+            torch_ap_trace(self.replacement_func),
         )
 
         return PassResult(graph_module=target, modified=len(matches) > 0)
@@ -40,7 +43,7 @@ def main():
     def replacement(x):
         return x * 2
 
-    target_gm = fx.symbolic_trace(SimpleModule())
+    target_gm = torch_ap_trace(SimpleModule())
 
     # --- PRINT BEFORE ---
     print("=== Graph BEFORE Transformation ===")

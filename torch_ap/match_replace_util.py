@@ -2,6 +2,7 @@ import torch
 import torch.fx as fx
 from dataclasses import dataclass
 from typing import Callable, Any, Dict, List, Optional
+from torch_ap.torch_ap_trace import torch_ap_trace
 
 
 @dataclass
@@ -195,7 +196,7 @@ if __name__ == "__main__":
                 # replacement contains 0 call_module nodes
                 return torch.matmul(x, y) + bias_val
 
-        return fx.symbolic_trace(Replacement())
+        return torch_ap_trace(Replacement())
 
     # --- Verification ---
     print("--- Before Transformation ---")
