@@ -1,8 +1,36 @@
 import torch
 
-from torch_ap.matmul_epilogue_fusibility_predictor import (
-    create_predictor_from_func,
-)
+def fusibility_of(epilogue_func) -> bool:
+    """Check if an epilogue function is fusible."""
+    from torch_ap.torch_ap_trace import torch_ap_trace
+    from torch_ap.concrete_pass.demo_matmul_epilogue_replacer_pass import DemoMatmulEpilogueReplacerPass
+    from torch_ap.trivial_ops_folder_pass import TrivialOpsFolderPass
+    from torch_ap.concrete_pass.matmul_epilogue_util import get_matmul_epilogue_arg_name_to_is_mm_out
+    from torch_ap.concrete_pass.matmul_epilogue_extractor_pass import MatmulEpilogueExtractorPass
+    from torch_ap.concrete_pass.matmul_epilogue_fusibility_predictor import (
+        MatmuEpilogueFusibilityPredicator,
+    )
+
+    demo_pass = DemoMatmulEpilogueReplacerPass(epilogue_func)
+    gm = torch_ap_trace(epilogue_func)
+    res = demo_pass(gm)
+    matmul_plus_epilogue = res.graph_module
+
+    res = TrivialOpsFolderPass()(matmul_plus_epilogue)
+    matmul_plus_epilogue = res.graph_module
+
+    arg_list = get_matmul_epilogue_arg_name_to_is_mm_out(matmul_plus_epilogue)
+    mm_idx_list = [i for i, (_, is_mm) in enumerate(arg_list) if is_mm]
+    if not mm_idx_list:
+        raise ValueError("No matmul output found")
+    mm_idx = mm_idx_list[0]
+
+    epilogue_gm = MatmulEpilogueExtractorPass()(matmul_plus_epilogue).graph_module
+
+    # Default config - no custom overrides needed
+    predictor = MatmuEpilogueFusibilityPredicator(config_pattern_rewriters=lambda x: x)
+
+    return predictor(epilogue_gm, mm_idx)
 
 
 def test_case_1():
@@ -14,12 +42,8 @@ def test_case_1():
     def case_math(x, w):
         return torch.tanh(x**2) + w
 
-    predictor, epilogue_gm, mm_idx = create_predictor_from_func(case_math)
+    result = fusibility_of(case_math)
 
-    print("\n--- Epilogue GraphModule ---")
-    print(epilogue_gm.code)
-
-    result = predictor(epilogue_gm, mm_idx)
     print(f"\nFusibility Prediction: {result}")
     return result
 
@@ -33,12 +57,8 @@ def test_case_2():
     def case_topo(x, w1, w2):
         return x + w1 + w2
 
-    predictor, epilogue_gm, mm_idx = create_predictor_from_func(case_topo)
+    result = fusibility_of(case_topo)
 
-    print("\n--- Epilogue GraphModule ---")
-    print(epilogue_gm.code)
-
-    result = predictor(epilogue_gm, mm_idx)
     print(f"\nFusibility Prediction: {result}")
     return result
 
@@ -52,12 +72,8 @@ def test_case_3():
     def case_tuple(x, w):
         return torch.relu(x) + w, x
 
-    predictor, epilogue_gm, mm_idx = create_predictor_from_func(case_tuple)
+    result = fusibility_of(case_tuple)
 
-    print("\n--- Epilogue GraphModule ---")
-    print(epilogue_gm.code)
-
-    result = predictor(epilogue_gm, mm_idx)
     print(f"\nFusibility Prediction: {result}")
     return result
 
