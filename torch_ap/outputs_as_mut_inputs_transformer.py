@@ -16,16 +16,16 @@ class OutputAsMutInputsTransformer:
         symbolic_input_shapes: List[List[Any]],
     ) -> fx.GraphModule:
         # 1. ($graph_module_with_sole_submodule <- $target)
-        gm_with_sub = self._fold_to_sole_submodule(target)
+        gm_with_sub, placeholder_nodes = self._fold_to_sole_submodule(target)
 
         # 2. ($symbolic_output_shapes <- $target <- ...)
         output_shapes = self._infer_output_shapes(
             target, input_dtypes, symbolic_input_shapes
         )
 
-        # 3. ($inserted_mut_input_nodes <- $gm_with_sub <- ...)
+        # 3. ($inserted_mut_input_nodes <- $gm_with_sub <- $symbolic_input_shapes <- $symbolic_output_shapes <- $placeholder_nodes)
         mut_input_nodes = self._insert_empty_nodes(
-            gm_with_sub, output_shapes, input_dtypes
+            gm_with_sub, output_shapes, input_dtypes, placeholder_nodes
         )
 
         # 4. ($sole_submodule <- $gm_with_sub)
@@ -40,6 +40,10 @@ class OutputAsMutInputsTransformer:
 
         # 6. ($sole_submodule_without_outputs <- $sole_submodule_with_mut_inputs)
         self._convert_outputs_to_mut_ops(sole_sub)
+
+        # 7. Set the output to return mut_input nodes (the tensors that were modified in-place)
+        gm_with_sub.graph.output(mut_input_nodes[0] if len(mut_input_nodes) == 1 else tuple(mut_input_nodes))
+        gm_with_sub.recompile()
 
         return gm_with_sub
 
@@ -59,10 +63,9 @@ class OutputAsMutInputsTransformer:
 
         # Call the submodule
         sub_call = new_graph.call_module("sub", args=tuple(placeholder_nodes))
-        new_graph.output(sub_call)
-
+        # Note: Output is set later in __call__ after mut_input nodes are inserted
         new_gm.recompile()
-        return new_gm
+        return new_gm, placeholder_nodes
 
     def _infer_output_shapes(self, target, dtypes, in_shapes) -> List[List[Any]]:
         try:
@@ -100,7 +103,7 @@ class OutputAsMutInputsTransformer:
         except Exception:
             return [in_shapes[0].copy() if in_shapes else [128, 64]]
 
-    def _insert_empty_nodes(self, gm, out_shapes, dtypes) -> List[fx.Node]:
+    def _insert_empty_nodes(self, gm, out_shapes, dtypes, placeholder_nodes) -> List[fx.Node]:
         """Inline logic: Insert torch.empty at the beginning of the main graph."""
         first_node = next(iter(gm.graph.nodes))
         inserted = []
@@ -112,10 +115,11 @@ class OutputAsMutInputsTransformer:
                 inserted.append(node)
 
         # Update the call to 'sub' with the newly inserted empty tensors
+        # Order: (placeholder_nodes..., mut_input_nodes...)
         sub_node = next(
             n for n in gm.graph.nodes if n.op == "call_module" and n.target == "sub"
         )
-        sub_node.args = (*sub_node.args, *inserted)
+        sub_node.args = (*placeholder_nodes, *inserted)
         gm.recompile()
         return inserted
 
