@@ -12,12 +12,18 @@ class OutputAsMutInputsTransformer:
     def __call__(
         self,
         target: fx.GraphModule,
-        input_dtypes: List[torch.dtype],
-        symbolic_input_shapes: List[List[Any]],
-        example_inputs: Any = None,
+        example_inputs: Any,
     ) -> fx.GraphModule:
         # 1. ($graph_module_with_sole_submodule <- $target)
         gm_with_sub, placeholder_nodes = self._fold_to_sole_submodule(target)
+
+        # Extract dtypes and shapes from example_inputs
+        if isinstance(example_inputs, (tuple, list)):
+            input_dtypes = [inp.dtype for inp in example_inputs]
+            symbolic_input_shapes = [list(inp.shape) for inp in example_inputs]
+        else:
+            input_dtypes = [example_inputs.dtype]
+            symbolic_input_shapes = [list(example_inputs.shape)]
 
         # 2. ($symbolic_output_shapes <- $target <- ...)
         output_shapes = self._infer_output_shapes(
@@ -192,9 +198,9 @@ def test_main():
     gm = fx.symbolic_trace(model)
 
     transformer = OutputAsMutInputsTransformer()
-    # Provide example_inputs to infer output shapes
+    # Provide example_inputs to infer output shapes, dtypes, and input shapes
     example_inputs = (torch.randn(128, 64), torch.randn(128, 64))
-    new_gm = transformer(gm, [torch.float32], [[128, 64]], example_inputs)
+    new_gm = transformer(gm, example_inputs)
 
     print("--- Transformed Graph Module Code ---")
     print(new_gm.code)
