@@ -14,13 +14,14 @@ class OutputAsMutInputsTransformer:
         target: fx.GraphModule,
         input_dtypes: List[torch.dtype],
         symbolic_input_shapes: List[List[Any]],
+        example_inputs: Any = None,
     ) -> fx.GraphModule:
         # 1. ($graph_module_with_sole_submodule <- $target)
         gm_with_sub, placeholder_nodes = self._fold_to_sole_submodule(target)
 
         # 2. ($symbolic_output_shapes <- $target <- ...)
         output_shapes = self._infer_output_shapes(
-            target, input_dtypes, symbolic_input_shapes
+            target, input_dtypes, symbolic_input_shapes, example_inputs
         )
 
         # 3. ($inserted_mut_input_nodes <- $gm_with_sub <- $symbolic_input_shapes <- $symbolic_output_shapes <- $placeholder_nodes)
@@ -67,12 +68,23 @@ class OutputAsMutInputsTransformer:
         new_gm.recompile()
         return new_gm, placeholder_nodes
 
-    def _infer_output_shapes(self, target, dtypes, in_shapes) -> List[List[Any]]:
+    def _infer_output_shapes(self, target, dtypes, in_shapes, example_inputs=None) -> List[List[Any]]:
+        # Try running with example_inputs first if provided
+        if example_inputs is not None:
+            with torch.no_grad():
+                outputs = target(*example_inputs)
+            if isinstance(outputs, (tuple, list)):
+                shapes = [list(o.shape) for o in outputs]
+                return shapes
+            return [list(outputs.shape)]
+
         try:
             from torch.export import export
         except ImportError:
-            # Fallback: heuristic
-            return [in_shapes[0].copy() if in_shapes else [128, 64]]
+            raise RuntimeError(
+                "Cannot infer output shapes: torch.export not available and no example_inputs provided. "
+                "Please provide example_inputs to infer output shapes."
+            )
 
         try:
             # Create example inputs
@@ -96,12 +108,19 @@ class OutputAsMutInputsTransformer:
                 return None
 
             shape = get_shape(out_val)
-            return (
-                [shape] if shape else [in_shapes[0].copy() if in_shapes else [128, 64]]
-            )
+            if shape is None:
+                raise RuntimeError(
+                    "Cannot infer output shapes: export succeeded but shape info not available. "
+                    "Please provide example_inputs."
+                )
+            return [shape]
 
-        except Exception:
-            return [in_shapes[0].copy() if in_shapes else [128, 64]]
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(
+                f"Cannot infer output shapes: {e}. Please provide example_inputs."
+            ) from e
 
     def _insert_empty_nodes(self, gm, out_shapes, dtypes, placeholder_nodes) -> List[fx.Node]:
         """Inline logic: Insert torch.empty at the beginning of the main graph."""
@@ -173,7 +192,9 @@ def test_main():
     gm = fx.symbolic_trace(model)
 
     transformer = OutputAsMutInputsTransformer()
-    new_gm = transformer(gm, [torch.float32], [[128, 64]])
+    # Provide example_inputs to infer output shapes
+    example_inputs = (torch.randn(128, 64), torch.randn(128, 64))
+    new_gm = transformer(gm, [torch.float32], [[128, 64]], example_inputs)
 
     print("--- Transformed Graph Module Code ---")
     print(new_gm.code)
