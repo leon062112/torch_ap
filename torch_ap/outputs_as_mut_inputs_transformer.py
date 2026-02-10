@@ -45,11 +45,11 @@ class OutputAsMutInputsTransformer:
 
     def _fold_to_sole_submodule(self, target: fx.GraphModule) -> fx.GraphModule:
         """Inline logic: Folds existing graph into a submodule called 'sub'."""
-        # 先创建空GM，再添加submodule，避免recompile时graph为空的问题
+        # First create an empty GM, then add submodule to avoid empty graph issue during recompile
         new_gm = fx.GraphModule(torch.nn.Module(), fx.Graph())
         new_gm.add_submodule("sub", target)
 
-        # 现在构建graph
+        # Now build the graph
         new_graph = new_gm.graph
         placeholder_nodes = []
         for n in target.graph.nodes:
@@ -57,7 +57,7 @@ class OutputAsMutInputsTransformer:
                 new_ph = new_graph.placeholder(n.target)
                 placeholder_nodes.append(new_ph)
 
-        # 调用子模块
+        # Call the submodule
         sub_call = new_graph.call_module("sub", args=tuple(placeholder_nodes))
         new_graph.output(sub_call)
 
@@ -72,15 +72,15 @@ class OutputAsMutInputsTransformer:
             return [in_shapes[0].copy() if in_shapes else [128, 64]]
 
         try:
-            # 创建示例输入
+            # Create example inputs
             fake_inputs = []
             for dtype, shape in zip(dtypes, in_shapes):
                 fake_inputs.append(torch.empty(shape, dtype=dtype))
 
-            # 导出带有 shape info 的 graph
+            # Export graph with shape info
             ep = export(target, tuple(fake_inputs), dynamic_shapes=None)
 
-            # 获取输出 shape
+            # Get output shape
             output_node = ep.graph_module.graph.output_node()
             out_val = output_node.args[0]
 
@@ -111,7 +111,7 @@ class OutputAsMutInputsTransformer:
                 )
                 inserted.append(node)
 
-        # 更新对 'sub' 的调用参数，包含这些新插入的空 Tensor
+        # Update the call to 'sub' with the newly inserted empty tensors
         sub_node = next(
             n for n in gm.graph.nodes if n.op == "call_module" and n.target == "sub"
         )
@@ -124,7 +124,7 @@ class OutputAsMutInputsTransformer:
     ):
         """Inline logic: Add placeholders to the submodule's graph."""
         with sub_gm.graph.inserting_after(None):  # Insert at beginning
-            # 找到现有的最后一个 placeholder 之后插入
+            # Find the last placeholder and insert after it
             last_ph = None
             for n in sub_gm.graph.nodes:
                 if n.op == "placeholder":
@@ -144,23 +144,23 @@ class OutputAsMutInputsTransformer:
             if n.op == "placeholder" and "mut_input_" in n.target
         ]
 
-        # 假设输出是一个 Tensor 或 Tuple[Tensor]
+        # Assume output is a Tensor or Tuple[Tensor]
         out_vals = output_node.args[0]
         if not isinstance(out_vals, (tuple, list)):
             out_vals = [out_vals]
 
         with sub_gm.graph.inserting_before(output_node):
             for val, ph in zip(out_vals, mut_placeholders):
-                # 核心转换：使用 copy_ 实现原地赋值
+                # Core transformation: use copy_ for in-place assignment
                 sub_gm.graph.call_method("copy_", args=(ph, val))
 
-        # 移除返回值 (返回 void)
+        # Remove return value (return void)
         output_node.args = (None,)
         sub_gm.recompile()
 
 
 def test_main():
-    # 构造一个简单的计算图: out = x + y
+    # Construct a simple computation graph: out = x + y
     class SimpleModel(torch.nn.Module):
         def forward(self, x, y):
             return x + y
