@@ -29,7 +29,7 @@ class OutputAsMutInputsTransformer:
             target, example_inputs
         )
 
-        # 3. ($inserted_mut_input_nodes <- $gm_with_sub <- $example_input_shapes <- $symbolic_output_shapes <- $placeholder_nodes)
+        # 3. ($inserted_mut_input_nodes <- $gm_with_sub <- $example_input_shapes <- $output_shapes <- $placeholder_nodes)
         mut_input_nodes = self._insert_empty_nodes(
             gm_with_sub, output_shapes, input_dtypes, placeholder_nodes
         )
